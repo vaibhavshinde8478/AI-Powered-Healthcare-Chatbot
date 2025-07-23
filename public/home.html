@@ -93,12 +93,12 @@
             max-width: 60%;
         }
         .user-message {
-            background: #007bff;
-            color: white;
+            background: #3e8ee3;
+            color: rgb(6, 0, 0);
             align-self: flex-end;
         }
         .bot-message {
-            background: #e5e5e5;
+            background: #fbfafa;
             color: black;
             align-self: flex-start;
         }
@@ -132,7 +132,7 @@
         }
         .dark-mode .chat-box {
             background: #333;
-            color: white;
+            color: rgb(2, 0, 0);
         }
 
         .disease-response {
@@ -159,14 +159,14 @@
 
 .disease-response th {
     background: blue;
-    color: white;
+    color: rgb(1, 0, 0);
     padding: 8px;
     text-align: left;
 }
 
 .disease-response td {
     padding: 8px;
-    border: 1px solid #ddd;
+    border: 1px solid #080000;
     word-wrap: break-word;
     white-space: normal;
 }
@@ -192,7 +192,9 @@
     </div>
     <div class="container">
         <div class="sidebar" id="sidebar">
-            <button onclick="startNewChat()">New Chat</button>
+            <button onclick="startNewChat()">New Chat </button>
+            <button onclick="clearAllChats()">🗑️ Clear Chats</button>
+
             <ul id="previousChats"></ul>
         </div>
         <div class="chat-box" id="chatBox">
@@ -201,108 +203,437 @@
                 <input type="file" id="fileInput" style="display: none;" onchange="handleFileUpload()">
                 <button onclick="document.getElementById('fileInput').click()">📂</button>
                 <input type="text" id="userInput" placeholder="Type a message...">
+                
+                
                 <button onclick="startVoiceInput()">🎤</button>
                 <button onclick="sendMessage()">📩</button>
             </div>
+            
         </div>
     </div>
+    <div style="text-align:right; margin: 10px;">
+        <label for="languageSelect">🌐 Language:</label>
+        <select id="languageSelect">
+            <option value="english" selected>English</option>
+            <option value="hindi">हिंदी</option>
+            <option value="marathi">मराठी</option>
+        </select>
+    </div>
     <script>
-        let currentChat = [];
-        let previousChats = [];
-        let dataset = [];
-    
-        async function callGemini(prompt) {
-            const response = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=AIzaSyCIE2SdJvTZbPMNVLtKbPUTyLT9UTQIJLE', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts: [{ text: prompt }] }]
-                })
-            });
-            const data = await response.json();
-            return data?.candidates?.[0]?.content?.parts?.[0]?.text || "Sorry, I couldn't process that.";
+     let currentUtterance = null;
+    let currentChat = [];
+    let previousChats = [];
+    let dataset = [];
+
+    function getLanguagePrompt(basePrompt) {
+        const lang = document.getElementById("languageSelect").value;
+        if (lang === "hindi") {
+            return `Translate and respond in Hindi: ${basePrompt}`;
+        } else if (lang === "marathi") {
+            return `Translate and respond in Marathi: ${basePrompt}`;
         }
-    
-        function isSymptomInput(input) {
-            input = input.toLowerCase();
-            for (let row of dataset) {
-                const symptoms = row.symptoms.toLowerCase().split(',');
-                if (symptoms.some(symptom => input.includes(symptom.trim()))) {
-                    return row;
+        return basePrompt; // English
+    }
+
+    async function callAkashChat(prompt) {
+    const langPrompt = getLanguagePrompt(prompt);
+    const response = await fetch("https://chatapi.akash.network/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer sk-zL_kOY1PF1vm0n3I5Eu1dw"
+        },
+        body: JSON.stringify({
+            model: "Qwen3-235B-A22B-FP8",
+            messages: [
+                { role: "user", content: langPrompt }
+            ]
+        })
+    });
+
+    const data = await response.json();
+    let content = data?.choices?.[0]?.message?.content || "Sorry, I couldn't process that.";
+
+    // Remove <think>...</think> block if it exists
+    content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+    return content;
+}
+
+    function isSymptomInput(input) {
+        const userSymptoms = input.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+        if (userSymptoms.length === 0) return null;
+
+        for (let row of dataset) {
+            const rowSymptoms = row["Symptoms"]?.toLowerCase().split(',').map(s => s.trim()).filter(Boolean);
+            if (!rowSymptoms || rowSymptoms.length === 0) continue;
+
+            const allMatch = userSymptoms.every(symptom => rowSymptoms.includes(symptom));
+            if (allMatch) {
+                return {
+                    disease: row["Disease Name"],
+                    precaution: row["Precautions"],
+                    diet: row["Diet Plan"],
+                    remedy: row["Home Remedies"],
+                    symptoms: row["Symptoms"]
+                };
+            }
+        }
+        return null;
+    }
+
+    function handleFileUpload() {
+        const file = document.getElementById('fileInput').files[0];
+        if (file) {
+            Papa.parse(file, {
+                header: true,
+                complete: function (results) {
+                    dataset = results.data;
+                    alert("Dataset uploaded successfully!");
                 }
+            });
+        }
+    }
+    
+    function pauseReading() {
+    if (speechSynthesis.speaking && !speechSynthesis.paused) {
+        speechSynthesis.pause();
+    }
+}
+
+function resumeReading() {
+    if (speechSynthesis.paused) {
+        speechSynthesis.resume();
+    }
+}
+
+
+function addMessage(text, isUser = true) {
+    const message = document.createElement("div");
+    message.classList.add("message", isUser ? "user-message" : "bot-message");
+    message.innerText = text;
+
+    if (!isUser) {
+        const readButton = document.createElement("button");
+        readButton.innerText = "🔊";
+        readButton.style.marginLeft = "10px";
+        readButton.onclick = function () {
+            readAloud(text, this);
+        };
+        message.appendChild(readButton);
+    }
+
+    document.getElementById("messages").appendChild(message);
+    document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+
+    // ✅ Save to current chat history
+    currentChat.push({
+        sender: isUser ? "user-message" : "bot-message",
+        message: text
+    });
+    
+   
+}
+
+
+    async function sendMessage() {
+    const inputField = document.getElementById("userInput");
+    const userInput = inputField.value.trim();
+    if (!userInput) return;
+
+    addMessage(userInput, true);
+    inputField.value = "";
+
+    const matched = dataset && dataset.length > 0 ? isSymptomInput(userInput) : null;
+
+    if (matched) {
+        const matchedRow = dataset.find(row => row["Disease Name"] === matched.disease);
+
+        // Prepare unformatted plain text response for translation
+        const responseText = `
+Disease: ${matched.disease}
+Symptoms: ${matchedRow?.Symptoms || "N/A"}
+Precautions: ${matched.precaution || "N/A"}
+Diet Plan: ${matched.diet || "N/A"}
+Home Remedies: ${matched.remedy || "N/A"}
+        `.trim();
+
+        const lang = document.getElementById("languageSelect").value;
+        let translated = {
+            disease: matched.disease,
+            symptoms: matchedRow?.Symptoms || "N/A",
+            precaution: matched.precaution || "N/A",
+            diet: matched.diet || "N/A",
+            remedy: matched.remedy || "N/A"
+        };
+
+        // If not English, translate each field separately for accurate structure
+        if (lang !== "english") {
+            const [disease, symptoms, precaution, diet, remedy] = await Promise.all([
+                callAkashChat(`Translate this to ${lang}: ${translated.disease}`),
+                callAkashChat(`Translate this to ${lang}: ${translated.symptoms}`),
+                callAkashChat(`Translate this to ${lang}: ${translated.precaution}`),
+                callAkashChat(`Translate this to ${lang}: ${translated.diet}`),
+                callAkashChat(`Translate this to ${lang}: ${translated.remedy}`)
+            ]);
+
+            translated = { disease, symptoms, precaution, diet, remedy };
+        }
+
+        // Create table UI
+        const responseDiv = document.createElement("div");
+        responseDiv.classList.add("disease-response");
+        responseDiv.innerHTML = `
+            <h3>🩺 Disease Prediction: ${translated.disease}</h3>
+            <table>
+                <tr><th>Disease Name</th><td>${translated.disease}</td></tr>
+                <tr><th>Symptoms</th><td>${translated.symptoms}</td></tr>
+                <tr><th>Precautions</th><td>${translated.precaution}</td></tr>
+                <tr><th>Diet Plan</th><td>${translated.diet}</td></tr>
+                <tr><th>Home Remedies</th><td>${translated.remedy}</td></tr>
+            </table>
+            <button class="read-table-button" onclick="readAloudTable(this.previousElementSibling, this)">🔊 Read Aloud</button>
+
+        `;
+        document.getElementById("messages").appendChild(responseDiv);
+        document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+
+    } else {
+        // Fallback to generic bot response
+        const botReply = await callAkashChat(userInput);
+        addMessage(botReply, false);
+    }
+}
+
+    function toggleTheme() {
+        document.body.classList.toggle("dark-mode");
+    }
+
+    function startNewChat() {
+    if (currentChat.length > 0) {
+        let storedChats = JSON.parse(sessionStorage.getItem("chatHistory")) || [];
+        storedChats.push(currentChat);
+        sessionStorage.setItem("chatHistory", JSON.stringify(storedChats));
+        loadChatTitles(); // 👈 Refresh sidebar
+    }
+
+    document.getElementById("messages").innerHTML = "";
+    currentChat = [];
+}
+function clearAllChats() {
+    sessionStorage.removeItem("chatHistory");
+    currentChat = [];
+    document.getElementById("messages").innerHTML = "";
+    loadChatTitles();
+}
+
+
+function loadPreviousChats() {
+    const storedChats = JSON.parse(sessionStorage.getItem("chatHistory")) || [];
+    const messagesContainer = document.getElementById("messages");
+
+    storedChats.forEach((chat, index) => {
+        const separator = document.createElement("div");
+        separator.innerHTML = `<hr><strong>Previous Chat ${index + 1}</strong>`;
+        messagesContainer.appendChild(separator);
+
+        chat.forEach(msg => {
+            const div = document.createElement("div");
+            div.className = msg.sender;
+            div.textContent = msg.message;
+            messagesContainer.appendChild(div);
+        });
+    });
+}
+
+
+    function startVoiceInput() {
+        const recognition = new webkitSpeechRecognition();
+        recognition.lang = "en-US";
+        recognition.onresult = function (event) {
+            document.getElementById("userInput").value = event.results[0][0].transcript;
+        };
+        recognition.start();
+    }
+
+    let isReading = false;
+let isPaused = false;
+
+function readAloud(text, button) {
+    if (!window.speechSynthesis) {
+        alert("Sorry, your browser doesn't support speech synthesis.");
+        return;
+    }
+
+    if (isReading && !isPaused) {
+        speechSynthesis.pause();
+        isPaused = true;
+        button.innerText = "▶️"; // Show play icon
+        return;
+    } else if (isReading && isPaused) {
+        speechSynthesis.resume();
+        isPaused = false;
+        button.innerText = "⏸️"; // Show pause icon
+        return;
+    }
+
+    // Start reading fresh
+    speechSynthesis.cancel();
+    currentUtterance = new SpeechSynthesisUtterance(text);
+    const lang = document.getElementById("languageSelect").value;
+    currentUtterance.lang = lang === "hindi" ? "hi-IN" : lang === "marathi" ? "mr-IN" : "en-US";
+
+    currentUtterance.onstart = () => {
+        isReading = true;
+        isPaused = false;
+        button.innerText = "⏸️";
+    };
+    currentUtterance.onend = () => {
+        isReading = false;
+        isPaused = false;
+        button.innerText = "🔊";
+    };
+
+    speechSynthesis.speak(currentUtterance);
+}
+
+
+
+    // Auto-load dataset from GitHub
+    window.onload = function () {
+        Papa.parse("https://raw.githubusercontent.com/vaibhavshinde8478/Healthcare-Chatbot/main/most_common_100_diseases_full.csv", {
+            download: true,
+            header: true,
+            complete: function (results) {
+                dataset = results.data;
+                console.log("Dataset loaded from GitHub");
             }
-            return null;
-        }
-    
-        function handleFileUpload() {
-            const file = document.getElementById('fileInput').files[0];
-            if (file) {
-                Papa.parse(file, {
-                    header: true,
-                    complete: function (results) {
-                        dataset = results.data;
-                        alert("Dataset uploaded successfully!");
-                    }
-                });
-            }
-        }
-    
-        function addMessage(text, isUser = true) {
-            const message = document.createElement("div");
-            message.classList.add("message", isUser ? "user-message" : "bot-message");
-            message.innerText = text;
-            document.getElementById("messages").appendChild(message);
-            document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
-        }
-    
-        async function sendMessage() {
-            const inputField = document.getElementById("userInput");
-            const userInput = inputField.value.trim();
-            if (!userInput) return;
-            addMessage(userInput, true);
-            inputField.value = "";
-    
-            const matched = isSymptomInput(userInput);
-            if (matched) {
-                const responseDiv = document.createElement("div");
-                responseDiv.classList.add("disease-response");
-                responseDiv.innerHTML = `
-                    <h3>🩺 Disease Prediction: ${matched.disease}</h3>
-                    <table>
-                        <tr><th>Precaution</th><td>${matched.precaution}</td></tr>
-                        <tr><th>Diet</th><td>${matched.diet}</td></tr>
-                        <tr><th>Home Remedy</th><td>${matched.remedy}</td></tr>
-                    </table>
-                `;
-                document.getElementById("messages").appendChild(responseDiv);
-                document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+        });
+        loadChatTitles(); // 👈 Load chat titles into sidebar
+    }
+
+    function loadChatTitles() {
+    const storedChats = JSON.parse(sessionStorage.getItem("chatHistory")) || [];
+    const list = document.getElementById("previousChats");
+    list.innerHTML = "";
+
+    storedChats.forEach((_, index) => {
+        const li = document.createElement("li");
+        li.innerText = `Chat ${index + 1}`;
+        li.onclick = () => loadChatByIndex(index);
+        list.appendChild(li);
+    });
+}
+
+function loadChatByIndex(index) {
+    const storedChats = JSON.parse(sessionStorage.getItem("chatHistory")) || [];
+    if (storedChats[index]) {
+        document.getElementById("messages").innerHTML = "";
+        currentChat = [...storedChats[index]];
+
+        currentChat.forEach(msg => {
+            if (msg.sender === "bot-message" || msg.sender === "user-message") {
+                addMessage(msg.message, msg.sender === "user-message");
             } else {
-                const botReply = await callGemini(userInput);
-                addMessage(botReply, false);
+                // Fallback in case of structured disease message (optional)
+                const div = document.createElement("div");
+                div.className = msg.sender;
+                div.textContent = msg.message;
+                document.getElementById("messages").appendChild(div);
             }
-        }
+        });
+    }
+}
+
+    function readAloudTable(tableElement, button) {
+    if (!window.speechSynthesis) {
+        alert("Sorry, your browser doesn't support speech synthesis.");
+        return;
+    }
+
+    if (isReading && !isPaused) {
+        speechSynthesis.pause();
+        isPaused = true;
+        button.innerText = "▶️";
+        return;
+    } else if (isReading && isPaused) {
+        speechSynthesis.resume();
+        isPaused = false;
+        button.innerText = "⏸️";
+        return;
+    }
+
+    const rows = Array.from(tableElement.querySelectorAll("tr"));
+    const text = rows.map(row => {
+        const cells = row.querySelectorAll("th, td");
+        return cells.length === 2 ? `${cells[0].innerText}: ${cells[1].innerText}` : "";
+    }).join(". ");
+
+    speechSynthesis.cancel();
+    currentUtterance = new SpeechSynthesisUtterance(text);
+    const lang = document.getElementById("languageSelect").value;
+    currentUtterance.lang = lang === "hindi" ? "hi-IN" : lang === "marathi" ? "mr-IN" : "en-US";
+
+    currentUtterance.onstart = () => {
+        isReading = true;
+        isPaused = false;
+        button.innerText = "⏸️";
+    };
+    currentUtterance.onend = () => {
+        isReading = false;
+        isPaused = false;
+        button.innerText = "🔊";
+    };
+
+    speechSynthesis.speak(currentUtterance);
+}
+
+
+
+</script>
+
     
-        function toggleTheme() {
-            document.body.classList.toggle("dark-mode");
-        }
-    
-        function startNewChat() {
-            document.getElementById("messages").innerHTML = "";
-            currentChat = [];
-        }
-    
-        function startVoiceInput() {
-            const recognition = new webkitSpeechRecognition();
-            recognition.lang = "en-US";
-            recognition.onresult = function (event) {
-                document.getElementById("userInput").value = event.results[0][0].transcript;
-            };
-            recognition.start();
-        }
-    </script>
-    
-    
-    
-    
+
 </body>
-</html>
+<!-- </html>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 -->
+<!-- async function sendMessage() {
+    const inputField = document.getElementById("userInput");
+    const userInput = inputField.value.trim();
+    if (!userInput) return;
+
+    addMessage(userInput, true);
+    inputField.value = "";
+
+    // Check for symptoms match only if dataset is available
+    let matched = null;
+    if (dataset && dataset.length > 0) {
+        matched = isSymptomInput(userInput);
+    }
+
+    if (matched) {
+        const matchedRow = dataset.find(row => row["Disease Name"] === matched.disease);
+        const responseDiv = document.createElement("div");
+        responseDiv.classList.add("disease-response");
+        responseDiv.innerHTML = `
+            <h3>🩺 Disease Prediction: ${matched.disease}</h3>
+            <table>
+                <tr><th>Disease Name</th><td>${matched.disease}</td></tr>
+                <tr><th>Symptoms</th><td>${matchedRow?.Symptoms || "N/A"}</td></tr>
+                <tr><th>Precautions</th><td>${matched.precaution}</td></tr>
+                <tr><th>Diet Plan</th><td>${matched.diet}</td></tr>
+                <tr><th>Home Remedies</th><td>${matched.remedy}</td></tr>
+            </table>
+            <button class="read-table-button" onclick="readAloudTable(this.previousElementSibling)">🔊 Read Aloud</button>
+        `;
+        document.getElementById("messages").appendChild(responseDiv);
+        document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
+    } else {
+        // Always fallback to model
+        const botReply = await callOpenRouter(userInput);
+        addMessage(botReply, false);
+    }
+} -->
+
+
+
+<!-- akash network api sk-zL_kOY1PF1vm0n3I5Eu1dw -->
